@@ -1,0 +1,24 @@
+import "../new_encode.zok" as encode
+import "../blind.zok" as blind
+from "../../sig-pop/zok_src/zok_utils/unsafe_witness/big_nat/mod_arithmetic" import BigNat, modulo_reduce, integer_to_bignat, multiply, UncheckedBigNat, check_bignat_w_bitlen
+import "hashes/poseidon/poseidon" as poseidon
+from "../utils.zok" import zero_pad, ceildiv
+from "../new_encode.zok" import pack_vector
+
+def main(public field commit_ID_A, private field commit_rand, private field[8] ID_A, private field[8] ID_B, private field[32] N_H, public field H, private field H_r) -> bool:
+    // check commit_ID_A is valid with regards to commit_rand, ID_A
+    field[1] packed_ID_A = pack_vector::<8,248,8>(ID_A)
+    field comp_commit_ID_A = poseidon([commit_rand, ...packed_ID_A])
+    assert(comp_commit_ID_A == commit_ID_A)
+
+    // ID random assigned in the following based on H_r:
+    field[2][48] dual_hash = [[...N_H, ...ID_A, ...ID_B], [...N_H, ...ID_B, ...ID_A]]
+    field[48] selected_hash = if (H_r == 1) then dual_hash[0] else dual_hash[1] fi
+    
+    u32 pack_size1 = 48
+    u32 len1 = ceildiv(48, 248/8)
+    field[len1] packed1 = pack_vector::<pack_size1,248,8>(selected_hash)
+    field comp_H = poseidon(packed1)
+    assert(H == comp_H)
+    
+    return true

@@ -1,0 +1,82 @@
+import "../new_encode.zok" as encode
+import "../blind.zok" as blind
+from "../../sig-pop/zok_src/zok_utils/unsafe_witness/big_nat/mod_arithmetic" import BigNat, modulo_reduce, integer_to_bignat, multiply, UncheckedBigNat, check_bignat_w_bitlen, exp_mod_N
+import "hashes/poseidon/poseidon" as poseidon
+from "../utils.zok" import zero_pad, ceildiv
+from "../new_encode.zok" import pack_vector
+from "EMBED" import unpack, FIELD_MODULUS
+import "utils/pack/bool/pack" as pack
+
+def field_to_bits(field input) -> field[8]:
+    field[8] field_bits = [0; 8]
+    bool[8] bits = unpack::<8>(input)
+    assert(pack::<8>(bits) == input)
+    for u32 j in 0..8 do
+        field_bits[j] = if bits[j] then 1 else 0 fi
+    endfor
+    return field_bits
+
+def fields256_to_bits(field[256] input) -> field[2048]:
+    field[2048] output = [0;2048]
+    for u32 i in 0..256 do
+        field[8] tmp = field_to_bits(input[i])
+        for u32 j in 0..8 do
+            output[i*8+j] = tmp[j]
+        endfor 
+    endfor
+    return output
+
+def group_124(field[2108] input) -> field[17]:
+    field[17] tmp = [0;17]
+    for u32 i in 0..17 do
+        for u32 j in 0..124 do
+            tmp[i] = tmp[i] + 2 **j* input[i*124+123-j]
+        endfor
+    endfor
+    return tmp
+
+def reverse(field[17] input) -> field[17]:
+    field[17] tmp = [0;17]
+    for u32 i in 0..17 do
+        tmp[i] = input[16-i]
+    endfor
+    return tmp
+
+const integer N = 20178927341455904369096919339071324001617078631762175814877541447479028547335149313909069066055303252851780347400950257395432187975849691108602009638958910339505322573926025484798855472444917774963061365304170710821645433459172809602038894629151277248757645723547408586246479035396330501863132506856661623171953061958517673260172542909953896446236799302676540838934504755374923856445503395605291006693895395972205362126792827567308469597992713622352677141829975197496915673420703137784789567464460491699767168216156903499138929067724663552550917105878765439286906883286286547178819974473168811977056384207194840595217
+
+
+def main(public field commit_ID_A, private field commit_rand, private field[8] ID_A, private field[32] N_ID_A, private field[15] salt, public field old_token, public field[17] blinded, private field[32] N_old_token, private field[17] r) -> bool:
+    // check commit_ID_A is valid with regards to commit_rand, ID_A
+    field[1] packed_ID_A = pack_vector::<8,248,8>(ID_A)
+    field comp_commit_ID_A = poseidon([commit_rand, ...packed_ID_A])
+    assert(comp_commit_ID_A == commit_ID_A)
+
+    // checked that the encoding is correct based on the hidden EM
+    field[256] em = encode(ID_A, N_ID_A, salt)
+
+    field[60] sixty_zeros = [0;60]
+
+    field[2048] tmp = fields256_to_bits(em)
+    field[2108] tmp_padded = [...sixty_zeros, ...tmp]
+    
+    field[17] EM = reverse(group_124(tmp_padded))
+    UncheckedBigNat<17> unchecked_EM = UncheckedBigNat{limbs : EM}
+    BigNat<17> checked_EM = check_bignat_w_bitlen::<17, 8>(unchecked_EM, 124, 2048)
+
+    BigNat<17> r_e_mod_N = exp_mod_N(r)
+    
+    BigNat<34> prod = multiply::<17, 17, 34>(checked_EM,r_e_mod_N)
+    BigNat<17> checked_N = integer_to_bignat::<17, 124>(N)
+    BigNat<17> out = modulo_reduce::<34, 17, 8>(prod, checked_N)
+
+    assert(out.limbs == blinded)
+
+    // check old token creation
+    field[40] input_msg = [...N_old_token, ...ID_A]
+    u32 pack_size0 = 40
+    u32 len0 = ceildiv(40, 248/8)
+    field[len0] packed0 = pack_vector::<pack_size0,248,8>(input_msg)
+    field comp_old_token = poseidon(packed0)
+    assert(comp_old_token == old_token)
+
+    return true

@@ -1,0 +1,22 @@
+# Git history
+.git
+
+# Rust build artifacts (rebuilt inside Docker)
+src/sig-pop/target
+src/rust-rsa-poseidon/target
+
+# Generated Merkle-tree data (not needed; pre-bundled inputs are used)
+src/non_mem/__pycache__
+src/non_mem/sub_tree
+src/non_mem/root
+
+# ZKP key files and proofs (generated at container runtime)
+src/zkp/new_pcs_poseidon_offline/P
+src/zkp/new_pcs_poseidon_offline/V
+src/zkp/new_pcs_poseidon_online/P
+src/zkp/new_pcs_poseidon_online/V
+src/zkp/token_revoke/P
+src/zkp/token_revoke/V
+
+# Miscellaneous
+src/zkp/prover_inputs/token_revocation\ copy.txt

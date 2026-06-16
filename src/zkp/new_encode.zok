@@ -1,0 +1,143 @@
+import "../sig-pop/zok_src/hash/sha256/sha256.zok" as sha256
+from "../sig-pop/zok_src/hash/sha256/utils.zok" import unsafe_split_dyn, combine_limbs, fits_in_bits
+from "EMBED" import unpack, FIELD_MODULUS
+import "utils/pack/bool/pack" as pack
+import "hashes/poseidon/poseidon" as poseidon
+from "utils.zok" import zero_pad, ceildiv
+from "EMBED" import u32_from_bits, u8_from_bits, u8_to_bits, u32_to_bits, u16_to_bits, u64_to_bits, u16_from_bits
+
+//8 byte of 0x00 
+const field[8] padding1 = [0, 0, 0, 0, 0, 0, 0, 0]
+
+def pack_vector<N, NEW_SIZE, OLD_SIZE>(field[N] a) -> field[ceildiv(N, NEW_SIZE / OLD_SIZE)]:
+    u32 words_per_field = NEW_SIZE / OLD_SIZE
+    u32 outsize= ceildiv(N, words_per_field)
+    u32 padded_size = outsize * words_per_field
+
+    field[padded_size] padded_a = zero_pad(a)
+    field[outsize] out = [0; outsize]
+    for u32 i in 0..outsize do
+        out[i] = combine_limbs::<words_per_field>(padded_a[words_per_field*i..words_per_field*(i+1)], [OLD_SIZE; words_per_field])
+    endfor
+    return out
+
+def field_to_bits(field input) -> field[255]:
+    field[255] field_bits = [0; 255]
+    bool[255] bits = unpack::<255>(input)
+    assert(pack::<255>(bits) == input)
+    for u32 j in 0..255 do
+        field_bits[j] = if bits[j] then 1 else 0 fi
+    endfor
+    return field_bits
+
+def field_to_bytes(field input) -> field[32]:
+    field[32] field_bytes = [0; 32]
+    bool[256] bits = unpack::<256>(input)
+    assert(pack::<256>(bits) == input)
+    
+    field[256] field_bits = [0; 256]
+    for u32 j in 0..256 do
+        field_bits[j] = if bits[j] then 1 else 0 fi
+    endfor
+
+    for u32 i in 0..32 do
+        for u32 j in 0..8 do
+            field_bytes[i] = field_bytes[i] + 2**j*field_bits[i*8+7-j]
+        endfor
+    endfor
+    return field_bytes
+
+def u124_to_bits(field[3] input) -> field[372]:
+    field[372] bits = [0; 372]
+    for u32 i in 0..3 do
+        bool[124] u124_bits = unpack::<124>(input[i])
+        assert(pack::<124>(u124_bits) == input[i])
+        for u32 j in 0..124 do
+            bits[124*i +j] = if u124_bits[123-j] then 1 else 0 fi
+        endfor
+    endfor
+    return bits
+
+const field[207] PS = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+def u8_from_field(field f) -> u8:
+    bool[8] f_bits = unpack::<8>(f)
+    return u8_from_bits(f_bits)
+
+def u8_to_field(u8 a) -> field:
+    bool[8] bits = u8_to_bits(a)
+    return pack(bits)
+
+def xor(field[32] out_six, field[31] tmp) -> field[31]:
+    field[31] out_xor = [0;31]
+    u8 first = 0
+    u8 second = 0
+    for u32 i in 0..31 do
+        first = u8_from_field(out_six[i]) 
+        second = u8_from_field(tmp[i]) 
+        out_xor[i] = u8_to_field(first ^ second)
+    endfor
+    return out_xor
+
+def mgf(field[223] DB, field[32] seed) -> field[223]:
+    u32 pack_size = 36
+    u32 len = ceildiv(36, 248/8)
+
+    field[len] packed = pack_vector::<pack_size,248,8>([...seed, 0, 0, 0, 0])
+    field[32] out_zero = field_to_bytes(poseidon(packed))
+    field tmp = if out_zero[0] > 127 then out_zero[0] - 128 else out_zero[0] fi 
+
+    packed = pack_vector::<pack_size,248,8>([...seed, 0, 0, 0, 1])
+    field[32] out_one = field_to_bytes(poseidon(packed))
+
+    packed = pack_vector::<pack_size,248,8>([...seed, 0, 0, 0, 2])
+    field[32] out_two = field_to_bytes(poseidon(packed))
+
+    packed = pack_vector::<pack_size,248,8>([...seed, 0, 0, 0, 3])
+    field[32] out_three = field_to_bytes(poseidon(packed))
+
+    packed = pack_vector::<pack_size,248,8>([...seed, 0, 0, 0, 4])
+    field[32] out_four = field_to_bytes(poseidon(packed))
+
+    packed = pack_vector::<pack_size,248,8>([...seed, 0, 0, 0, 5])
+    field[32] out_five = field_to_bytes(poseidon(packed))
+
+    packed = pack_vector::<pack_size,248,8>([...seed, 0, 0, 0, 6])
+    field[32] out_six = field_to_bytes(poseidon(packed))
+
+    field[31] last_maskedDB = xor(out_six, DB[192..223])
+    
+    // no need to XOR for the first 6 - 32 bytes.
+    field[223] maskedDB = [tmp, ...out_zero[1..32], ...out_one, ...out_two, ...out_three, ...out_four, ...out_five, ...last_maskedDB]
+    return maskedDB
+
+def main(field[8] ID_A, field[32] msg_prefix, field[15] salt) -> field[256]:
+    // Prepare Phase ------- rfc9474 section 4.1
+    field[40] input_msg = [...msg_prefix, ...ID_A]
+
+    // compute poseidon on input_msg
+    u32 pack_size = 40
+    u32 len = ceildiv(40, 248/8)
+    field[len] packed = pack_vector::<pack_size,248,8>(input_msg)
+    field mHash = poseidon(packed)
+
+    // Blind Phase ------- rfc9474 section 4.2
+    //packed padding 
+    field[1] packed_padding = pack_vector::<8,248,8>(padding1)
+
+    //packed salt 
+    field[1] packed_salt = pack_vector::<15,248,8>(salt)
+
+    field[3] tmp_fields = [packed_padding[0], mHash, packed_salt[0]]
+
+    //S
+    field[32] maskedseed = field_to_bytes(poseidon(tmp_fields))
+    
+    //DB 
+    field[223] DB = [...PS, 1, ...salt]
+
+    field[223] dbMask = mgf(DB, maskedseed)
+
+    field[256] em = [...dbMask, ...maskedseed, 188]
+
+    return em

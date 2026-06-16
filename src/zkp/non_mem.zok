@@ -1,0 +1,41 @@
+import "hashes/poseidon/poseidon" as poseidon
+
+def main(private field[20] auth_path_left, private field[20] direction_left, private field[20] auth_path_right, private field[20] direction_right, private field sub_root, private field left_leaf, private field right_leaf, private field[8] ID_A, private field[10] auth_path_root, private field[10] direction_root, public field root) -> bool:
+    field field_ID_A = 0
+    for u32 i in 0..8 do
+        field_ID_A = 2**(i*8)*ID_A[i]  + field_ID_A
+    endfor
+
+    // check that inspection on the leaf is between provided private left and right leaf
+    assert (left_leaf < field_ID_A)
+    assert (field_ID_A < right_leaf)
+
+    // check that left and right leaves are adjacent
+    field left_index = 0
+    field right_index = 0
+    for u32 i in 0..20 do
+        left_index = 2**i*direction_left[i] + left_index
+        right_index = 2**i*direction_right[i] + right_index
+    endfor
+    assert(left_index +1 == right_index)
+
+    //verify sub_root
+    field current_left = poseidon([left_leaf])
+    field current_right = poseidon([right_leaf])
+    for u32 i in 0..20 do
+        field[2] next_left = if direction_left[i] == 1 then [auth_path_left[i], current_left] else [current_left, auth_path_left[i]] fi
+        field[2] next_right = if direction_right[i] == 1 then [auth_path_right[i], current_right] else [current_right, auth_path_right[i]] fi
+        current_left = poseidon(next_left)
+        current_right = poseidon(next_right)
+    endfor
+    assert(current_left == sub_root)
+    assert(current_right == sub_root)
+
+    //check that root is in the list of verified roots
+    field comp_root = poseidon([sub_root])
+    for u32 i in 0..10 do
+        field[2] next = if direction_root[i] == 1 then [auth_path_root[i], comp_root] else [comp_root, auth_path_root[i]] fi
+        comp_root = poseidon(next)
+    endfor 
+    assert(comp_root == root)
+    return true
