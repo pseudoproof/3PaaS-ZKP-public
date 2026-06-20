@@ -39,10 +39,10 @@ Each circuit is run 5 times and the median time is reported.
 
 ```
 docker build -t 3paas-zkp .
-docker run --rm 3paas-zkp
+docker run --rm -v "$(pwd)/output:/output" 3paas-zkp
 ```
 
-The container will generate proving/verifying keys for all three circuits and then run the benchmark automatically.
+The container will generate proving/verifying keys for all three circuits, run the benchmark automatically, and write a Markdown report to `/output/benchmarks.md` (mounted to `./output/benchmarks.md` on the host). The report includes R1CS constraint counts, prover key sizes, and median prover/verifier times for all three circuits. The report is also printed to the terminal at the end of the run.
 
 ### Native
 

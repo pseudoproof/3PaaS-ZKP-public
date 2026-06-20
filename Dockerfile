@@ -111,4 +111,9 @@ ENV ZSHARP_STDLIB_PATH=/app/src/sig-pop/third_party/ZoKrates/zokrates_stdlib/std
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
+# Benchmark report is written here; mount a host directory to persist it.
+#   docker run -v "$(pwd)/output:/output" 3paas-zkp
+RUN mkdir -p /output
+VOLUME ["/output"]
+
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
